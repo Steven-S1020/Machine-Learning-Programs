@@ -1,2 +1,5 @@
-# Machine-Learning-Programs
-This repository contains code I wrote for my CSCI460 - Machine Learning class
+<h1 align='center'>
+  Machine Learning Programs
+</h1>
+
+This repository contains various programs that I wrote for my Machine Learning class. Each program/project folder contains a README.md giving a brief description of the program.
