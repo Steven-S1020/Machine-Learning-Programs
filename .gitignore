@@ -1,0 +1,4 @@
+# julia/nix/direnv
+*.directory
+*.direnv
+*.envrc
