@@ -1,3 +1,9 @@
+######################################################
+#  Student Name: Steven Stokes
+#  Course Code: CSCI 460 -- Fall 2026
+#  Assignment Due Date: 10/25/2026
+#  GitHub Link: https://github.com/Steven-S1020/Machine-Learning-Programs/tree/main/Naive-Bayes-Classifier
+######################################################
 # Making it able to be run as a script and have all needed packages
 using Pkg
 Pkg.activate(@__DIR__)  # Activates the environment in the script's directory
