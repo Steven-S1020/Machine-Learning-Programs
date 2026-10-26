@@ -4,99 +4,96 @@ Pkg.activate(@__DIR__)  # Activates the environment in the script's directory
 Pkg.instantiate()       # Automatically downloads/installs missing packages 
 
 using CSV
-using DataFrames
-using MLJ, MLJNaiveBayesInterface
+using DataFrames, PrettyTables
+using MLJScikitLearnInterface
+using MLJ
+using Statistics
+import Random.Xoshiro
 
-# Function to partition data given training fraction,
-# train model using this partition,
-# test model and return accuracy and f1score.
-function part_train_test(mach::Machine, train_fraction::Float64, X, y)
-    train_idxs, test_idxs = partition(eachindex(y), train_fraction, stratify=y)
-    fit!(mach, rows=train_idxs, force=true)
-
-    y_hat = predict_mode(mach, rows=test_idxs)
-    y_true = y[test_idxs]
-
-    return (
-        acc = accuracy(y_hat, y_true),
-        f1 = f1score(y_hat, y_true)
-    )
-end
 
 #--- Task I: Data Preperation ---#
-println("[--- Task Ⅰ ---]")
+println("[--- Task I ---]")
 data_file = "./data/bank-full.csv"
 df = CSV.read(data_file, DataFrame; delim=";")
 println("Loaded '$data_file'...")
 
-#=
-    Map each categorical variables into an integer number starting at 0. This applies to the 
-    columns: ‘job’, 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 
-    'poutcome', and the target column ‘y’
-=#
-categorical_cols = [
-    "job",
-    "marital",
-    "education",
-    "default",
-    "housing",
-    "loan",
-    "contact",
-    "month",
-    "poutcome",
-    "y"
-]
-
-# Mapping logic
-for col in categorical_cols
-    d = Dict(word => idx - 1 for (idx, word) in enumerate(unique(df[!, col])))
-    transform!(df, col .=> ByRow(x -> get(d, x, missing)), renamecols=false)
-end
-
-# Removes any rows that contain missing or NA data
+# Removes any rows that contain missing, NA, or "unknown" data
 dropmissing!(df)
+filter!(row -> !any(==("unknown"), row), df)
 
-df.y = Int64.(df.y)
 
 # Coerce Scientific Types so model interprets data correctly
-# Attributes => Continuous
 # Outcomes => Multiclass
+# Textual => Multiclass
+# Attributes => Continuous
+coerce!(df, :y => OrderedFactor)
+coerce!(df, Textual => Multiclass)
 coerce!(df, Count => Continuous)
-coerce!(df, :y => Multiclass)
 
 # Seperate Dataframe into attributes and outcomes
-initial_y, initial_X = unpack(df, ==(:y))
+y, X = unpack(df, ==(:y))
+
+# This maps all Multiclass and OrderedFactor columns to integer encoded values.
+encoder = MLJ.OrdinalEncoder(ordered_factor=true)
+mach = machine(encoder, X) |> fit!
+X = MLJ.transform(mach, X)
+
 
 println("Data Prepared")
 println("[--------------]")
 println()
 
 #--- Task II: Train and Test a Naive Bayes Model ---#
-println("[--- Task Ⅱ ---]")
+println("[--- Task II ---]")
 
 # Gets index values for training and testing data
 println("Split data using 70-30 stratified")
 
 # Loads GaussianNBClassifier and instantiates the model
-GaussianNBClassifier = @load GaussianNBClassifier pkg=NaiveBayes
+GaussianNBClassifier = (@load GaussianNBClassifier pkg=MLJScikitLearnInterface verbosity=0)
 gnb_model = GaussianNBClassifier()
 
 # Wrap the model and data into an MLJ machine
-initial_machine = machine(gnb_model, initial_X, initial_y)
-initial_results = part_train_test(initial_machine, 0.7)
-
-println("The accuracy of my Naive Bayes Model is: $(initial_results[1])")
-println("The F1 Score of my Naive Bayes Model is: $(initial_results[2])")
+train_idxs, test_idxs = partition(eachindex(y), 0.7, stratify=y, shuffle=true)
+custom_holdout = [(train_idxs, test_idxs)]
+initial_results = evaluate(gnb_model, X, y, resampling=custom_holdout, measure=[accuracy, f1score])
+results_df = DataFrame(
+    Measure = ["Accuracy", "F1 Score"],
+    Value   = initial_results.measurement,
+)
+pretty_table(results_df, show_first_column_label_only = true)
 
 #--- Task III ---#
+println("[--- Task III ---]")
+
 fractions = 0.1:0.1:0.9
+n_iter = 10
 
+results = DataFrame(
+    Train_Fraction = String[],
+    Acc_Mean = Float64[], Acc_Std = Float64[],
+    F1_Mean  = Float64[], F1_Std  = Float64[],
+)
 
-# comparison_df = DataFrame(
-#     Train_Fraction = ["$(Int(f * 100))%" for f in fractions],
-#         Accuracy = ["$(round(r.measurements[1] * 100, digits = 2))%" for r in results],
-#         F1_Score = [r.measurements[2] for r in results]
-# 
-# )
+for f in fractions
+    accs = Float64[]
+    f1s  = Float64[]
 
+    for i in 1:n_iter
+        # Different seed for each (fraction, iteration) pair
+        seed = round(Int, f * 100) * 100 + i
+        train, test = partition(eachindex(y), f, stratify=y, shuffle=true, rng=Xoshiro(seed))
 
+        r = evaluate(gnb_model, X, y,
+                     resampling=[(train, test)],
+                     measure=[accuracy, f1score],
+                     verbosity=0)
+
+        push!(accs, r.measurement[1])
+        push!(f1s,  r.measurement[2])
+    end
+
+    push!(results, ("$(Int(round(f * 100)))%", mean(accs), std(accs), mean(f1s), std(f1s)))
+end
+
+pretty_table(results, show_first_column_label_only = true)
